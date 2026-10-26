@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# net_samples: 演習で生成されるデータファイル
+*.dat
+*.bin

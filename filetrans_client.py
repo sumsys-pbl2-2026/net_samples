@@ -1,43 +1,73 @@
-# -*- coding: utf-8 -*-
 # filetrans_client.py
 #
 # 決められたファイルの指定されたサイズまでを転送するシステムのクライアント
 
+import socket
 import sys
-from socket import *
 
-BUFSIZE = 4096
-file_name = 'received_data.dat'
-server_name = 'localhost'
-server_port = 50001
+BUFSIZE = 4096  # 一度に受信処理するデータサイズ
 
-def interact_with_server(s, size):
-    # 要求メッセージを作る  例: '4096' ... 4096バイト要求
-    req_msg = '{0:d}\n'.format(size)
+FILE_NAME = 'received_data.dat'  # 受信した内容を書き込むファイルの名前
+SERVER_NAME = 'localhost'
+SERVER_PORT = 50001
+
+
+# サーバとやりとりする処理。受信できたバイト数を返す。
+def interact_with_server(s: socket.socket, size: int) -> int:
+    # 要求メッセージを作る  例: '4096\n' ... 4096バイト要求
+    #  末尾の改行が「ここまでが1つのメッセージ」という区切りの印になる。
+    #  サーバ側は改行が現れるまで受信を繰り返す（filetrans_server.py を参照）。
+    req_msg = f'{size:d}\n'
 
     # 要求メッセージの文字列をバイト列にして送信
-    s.send(req_msg.encode())
+    s.sendall(req_msg.encode())
 
     # 書き込み用ファイルをオープンして処理
-    #   with 構文を使って書いています。
-    #   ファイル絡みの例外処理とクローズの処理は書く必要がありません
-    with open(file_name, 'wb') as f:    # 'wb' は「バイナリファイルを書き込みモードで」という意味
+    #   with 構文を使って書いているので、close()を書かなくても
+    #   ブロックを抜けた時点でファイルはクローズされます。
+    #   （途中で例外が起きた場合もクローズされます）
+    received = 0
+    with open(FILE_NAME, 'wb') as f:  # 'wb' は「バイナリファイルを書き込みモードで」という意味
         while True:
-            data = s.recv(BUFSIZE)   # BUFSIZEバイトずつ受信
-            if len(data) <= 0:  # 受信したデータがゼロなら、相手からの送信は全て終了
+            data = s.recv(BUFSIZE)  # 最大BUFSIZEバイトずつ受信
+            if not data:  # 空のバイト列が返るのは、相手からの送信が全て終了したということ
                 break
             f.write(data)  # 受け取ったデータをファイルに書き込む
-    s.close()  # 最後にソケットをクローズ
+            received += len(data)
 
-if __name__ == '__main__':
+    return received
+
+
+def main() -> None:
     if len(sys.argv) < 2:
-        sys.exit('Usage: {0} size_in_bytes'.format(sys.argv[0]))
-    size = int(sys.argv[1])
+        sys.exit(f'Usage: {sys.argv[0]} size_in_bytes')
+
+    # 発展: 引数が増えてきたら、標準ライブラリのargparseモジュールを使うと、
+    #       使い方の表示や引数のエラー処理を自動で用意してくれる。
+    try:
+        size = int(sys.argv[1])
+    except ValueError:
+        sys.exit(f'サイズには数値を指定してください: {sys.argv[1]}')
 
     # ソケットを作ってサーバに接続
-    s = socket(AF_INET, SOCK_STREAM)
-    s.connect((server_name, server_port))
+    #  with構文を使うと、ブロックを抜けるときに自動的にclose()される
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((SERVER_NAME, SERVER_PORT))
+        received = interact_with_server(s, size)  # サーバとのデータのやりとりは別関数に
 
-    interact_with_server(s, size)  # サーバとのデータのやりとりは別関数に
+    print(f'Received {received} bytes -> {FILE_NAME}')
+    if received != size:
+        # 要求したサイズと受信できたサイズが食い違ったら知らせる。
+        #  （サーバ側のファイルが要求サイズより小さい場合などに起こる）
+        print(f'注意: 要求したサイズ({size}バイト)と受信したサイズが異なります。')
 
-    s.close()
+
+if __name__ == '__main__':
+    try:
+        main()
+    except ConnectionRefusedError:
+        # サーバが起動していないときに出る例外
+        sys.exit(f'サーバ({SERVER_NAME}:{SERVER_PORT})に接続できませんでした。'
+                 'サーバは起動していますか？')
+    except KeyboardInterrupt:
+        print()
